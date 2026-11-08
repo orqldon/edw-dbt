@@ -1,0 +1,6 @@
+# Paths `dbt lint` and `dbt format` skip: installed packages, build output, and the
+# setup script (Snowflake Scripting, not a dbt model).
+dbt_packages/
+target/
+logs/
+setup/

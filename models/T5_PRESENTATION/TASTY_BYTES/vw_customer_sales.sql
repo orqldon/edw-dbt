@@ -1,17 +1,17 @@
 -- Sales per loyalty customer over the loaded window (the quickstart's
 -- customer_loyalty_metrics, rebuilt over the star). Unknown customers are excluded.
 
-select
+SELECT
     c.customer_id,
     c.first_name,
     c.last_name,
     c.city,
     c.country,
-    count(distinct f.order_id)                        as order_count,
-    sum(f.line_amount)                                as total_sales,
-    array_sort(array_agg(distinct f.location_id))     as visited_location_ids
-from {{ ref('fct_order_line') }} as f
-inner join {{ ref('dim_customer') }} as c
-    on f.customer_id = c.customer_id
-where not c.is_unknown
-group by all
+    COUNT(DISTINCT f.order_id) AS order_count,
+    SUM(f.line_amount) AS total_sales,
+    ARRAY_SORT(ARRAY_AGG(DISTINCT f.location_id)) AS visited_location_ids
+FROM {{ ref('fct_order_line') }} AS f
+INNER JOIN {{ ref('dim_customer') }} AS c
+    ON f.customer_id = c.customer_id
+WHERE NOT c.is_unknown
+GROUP BY ALL

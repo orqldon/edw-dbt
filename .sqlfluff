@@ -1,0 +1,32 @@
+# Lint and format rules for `dbt lint` and `dbt format` (built into dbt v2), run from this folder:
+#   dbt lint                # report violations
+#   dbt lint --fix          # apply the auto-fixable ones (re-run until clean)
+#   dbt format              # rewrite layout (indentation, spacing, line breaks) in place
+#   dbt format --check      # fail if any file needs formatting; changes nothing
+# Rule codes (CP01, RF03, ...) are SQLFluff's. Suppress one on a line with `-- noqa: <code>`.
+
+[sqlfluff]
+# dbt renders each model with the project's own Jinja and macros before linting,
+# without connecting to Snowflake.
+templater = dbt
+dialect = snowflake
+max_line_length = 120
+
+# Rules to apply. This is an allowlist: naming any rule turns off every rule not named,
+# so the standard groups are listed by name, then dbt's own rules (off by default):
+#   DBT02 no OR in a JOIN condition        DBT03 no function around a filtered column
+#   DBT04 no LIKE pattern starting with %  DBT05 no hard-coded name inside ref()/source()
+rules = aliasing, ambiguous, capitalisation, convention, jinja, layout, references, structure,
+    DBT02, DBT03, DBT04, DBT05
+
+# ST06: select-column order (wildcards/simple columns first); ST07: prefer ON over USING.
+exclude_rules = ST06, ST07
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = upper

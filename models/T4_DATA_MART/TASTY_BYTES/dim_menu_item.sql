@@ -1,6 +1,6 @@
 -- Menu item dimension: one row per item sold.
 
-select
+SELECT
     menu_item_id,
     menu_item_name,
     item_category,
@@ -9,4 +9,4 @@ select
     truck_brand_name,
     cost_of_goods_usd,
     sale_price_usd
-from {{ source('tasty_bytes', 'menu') }}
+FROM {{ source('tasty_bytes', 'menu') }}

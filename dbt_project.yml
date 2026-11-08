@@ -20,6 +20,23 @@ vars:
   # the data ends 2022-11-01, so this default is about one month (~38M order lines).
   tasty_bytes_order_start_date: "2022-10-01"
 
+# Checks (dbt v2): static rules over the project's DAG and YAML, run before every
+# build and by `dbt check`; no warehouse needed. The only ones here come from
+# dbt_project_evaluator. Off by default; run on demand:
+#   dbt check --vars '{run_project_evaluator: true}'
+# (The default must be inside var(): `vars:` above isn't applied to these configs.)
+checks:
+  dbt_project_evaluator:
+    +enabled: "{{ var('run_project_evaluator', false) }}"
+
+# dbt_project_evaluator also ships coding-agent skills. Not installed; setting a
+# provider with the skills disabled stops dbt warning about them on every run.
+flags:
+  ai_provider: claude
+skills:
+  dbt_project_evaluator:
+    +enabled: false
+
 # Folder layout: models/<TIER>/<SCHEMA>/<model>.sql
 #   <TIER>   -> database <ENV>_<TIER>      (generate_database_name; ENV = target name)
 #   <SCHEMA> -> schema   <SCHEMA>          (generate_schema_name; DEV adds <DBT_DEV_PREFIX>_)

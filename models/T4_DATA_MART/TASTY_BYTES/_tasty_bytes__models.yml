@@ -33,7 +33,14 @@ models:
         data_tests: [unique, not_null]
 
   - name: fct_order_line
-    description: One row per order line. Grain is order_detail_id.
+    description: One row per order line. Grain is order_detail_id. Incremental.
+    data_tests:
+      # dbt_expectations (package): same row count as the interim model it loads from.
+      # Fails if an incremental run missed or duplicated rows, or if the date window
+      # was widened without --full-refresh.
+      - dbt_expectations.expect_table_row_count_to_equal_other_table:
+          arguments:
+            compare_model: ref('int_order_lines')
     columns:
       - name: order_detail_id
         data_tests: [unique, not_null]

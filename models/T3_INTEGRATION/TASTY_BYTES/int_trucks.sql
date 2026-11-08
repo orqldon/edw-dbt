@@ -3,34 +3,34 @@
 -- FRANCHISE repeats some franchise_ids (one row per city the franchisee works in), so it
 -- is reduced to one row per franchisee too; otherwise those trucks would be duplicated.
 
-with truck as (
+WITH truck AS (
 
-    select *
-    from {{ source('tasty_bytes', 'truck') }}
+    SELECT *
+    FROM {{ source('tasty_bytes', 'truck') }}
 
 ),
 
-menu_type as (
+menu_type AS (
 
-    select distinct
+    SELECT DISTINCT
         menu_type_id,
         menu_type,
         truck_brand_name
-    from {{ source('tasty_bytes', 'menu') }}
+    FROM {{ source('tasty_bytes', 'menu') }}
 
 ),
 
-franchise as (
+franchise AS (
 
-    select distinct
+    SELECT DISTINCT
         franchise_id,
         first_name,
         last_name
-    from {{ source('tasty_bytes', 'franchise') }}
+    FROM {{ source('tasty_bytes', 'franchise') }}
 
 )
 
-select
+SELECT
     t.truck_id,
     m.truck_brand_name,
     m.menu_type,
@@ -39,14 +39,14 @@ select
     t.country,
     t.make,
     t.model,
-    t.year                              as model_year,
-    t.ev_flag = 1                       as is_electric,
+    t.year AS model_year,
+    t.ev_flag = 1 AS is_electric,
     t.truck_opening_date,
-    t.franchise_flag = 1                as is_franchise,
+    t.franchise_flag = 1 AS is_franchise,
     t.franchise_id,
-    f.first_name || ' ' || f.last_name  as franchisee_name
-from truck as t
-left join menu_type as m
-    on t.menu_type_id = m.menu_type_id
-left join franchise as f
-    on t.franchise_id = f.franchise_id
+    f.first_name || ' ' || f.last_name AS franchisee_name
+FROM truck AS t
+LEFT JOIN menu_type AS m
+    ON t.menu_type_id = m.menu_type_id
+LEFT JOIN franchise AS f
+    ON t.franchise_id = f.franchise_id

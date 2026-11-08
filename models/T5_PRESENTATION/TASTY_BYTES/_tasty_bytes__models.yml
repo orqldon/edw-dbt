@@ -4,6 +4,11 @@ version: 2
 models:
   - name: vw_sales_by_truck_daily
     description: One row per truck per order date.
+    data_tests:
+      # dbt_utils (package): the grain. A model-level test, because no single column is unique.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_date, truck_id]
     columns:
       - name: sales_amount
         data_tests: [not_null]

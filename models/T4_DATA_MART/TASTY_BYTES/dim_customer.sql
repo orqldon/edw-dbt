@@ -2,7 +2,7 @@
 -- for orders placed without a loyalty account. fct_order_line maps NULL customer
 -- ids to -1, so every fact row joins to a customer with an inner join.
 
-select
+SELECT
     customer_id,
     first_name,
     last_name,
@@ -11,18 +11,20 @@ select
     gender,
     marital_status,
     sign_up_date,
-    false as is_unknown
-from {{ source('tasty_bytes', 'customer_loyalty') }}
+    false AS is_unknown
+FROM {{ source('tasty_bytes', 'customer_loyalty') }}
 
-union all
+UNION ALL
 
-select
-    -1,
-    'Unknown',
-    'Unknown',
-    null,
-    null,
-    null,
-    null,
-    null,
-    true
+SELECT
+    -1 AS customer_id,
+    -- noqa: RF04 below: the linter's Snowflake dialect lists FIRST_NAME and LAST_NAME
+    -- as keywords, but here they are the source's real column names.
+    'Unknown' AS first_name,  -- noqa: RF04
+    'Unknown' AS last_name,  -- noqa: RF04
+    null AS city,
+    null AS country,
+    null AS gender,
+    null AS marital_status,
+    null AS sign_up_date,
+    true AS is_unknown

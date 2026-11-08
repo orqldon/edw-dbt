@@ -1,0 +1,25 @@
+# Third-party dbt packages. Install with `dbt deps` (writes dbt_packages/ and package-lock.yml).
+#
+# Hosted runs: this sandbox has no external access integration, so Snowflake can't
+# download packages. Run `dbt deps` locally before deploying; dbt_packages/ is uploaded
+# with the source (it stays out of git). dbt v2 skips its own `dbt deps` when the
+# folder is present. Commit package-lock.yml so everyone installs the same versions.
+#
+# Versions: exact pins, the latest on hub.getdbt.com whose require-dbt-version includes 2.0.
+packages:
+  # Generic tests and SQL helpers (e.g. unique_combination_of_columns).
+  - package: dbt-labs/dbt_utils
+    version: 1.4.1
+
+  # Generates source/model YAML and base models on demand (`dbt run-operation`).
+  - package: dbt-labs/codegen
+    version: 0.14.1
+
+  # Checks the project against dbt Labs' best practices. Disabled by default;
+  # see dbt_project.yml and WALKTHROUGH.md.
+  - package: dbt-labs/dbt_project_evaluator
+    version: 2.0.2
+
+  # Great Expectations-style data tests. Installs godatadriven/dbt_date as a dependency.
+  - package: metaplane/dbt_expectations
+    version: 0.10.10

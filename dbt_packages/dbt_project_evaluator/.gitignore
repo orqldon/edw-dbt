@@ -1,0 +1,35 @@
+# Python virtualenv
+.venv/
+venv/
+
+# Environment variables
+# .env
+test.env
+
+# DBT artifacts
+target/
+logs/
+dbt_modules/
+dbt_packages/
+integration_tests/state/
+site/
+env/
+# profiles.yml
+package-lock.yml
+
+# IDE
+.vscode
+.idea
+
+# MacOS
+.DS_Store
+integration_tests/package-lock.yml
+
+# duckdb
+*.db
+*.duckdb
+dbt_internal_packages/
+.user.yml
+
+# agent skills that dbt installs from the package into the test projects
+integration_tests_checks/*/.claude/

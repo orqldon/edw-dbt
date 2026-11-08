@@ -4,11 +4,12 @@
 --
 -- Rule: an order line's amount is its quantity times its unit price, and is positive.
 
-select
+SELECT
     order_detail_id,
     quantity,
     unit_price,
     line_amount
-from {{ ref('fct_order_line') }}
-where quantity <= 0
-   or line_amount <> quantity * unit_price
+FROM {{ ref('fct_order_line') }}
+WHERE
+    quantity <= 0
+    OR line_amount <> quantity * unit_price
