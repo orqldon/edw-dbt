@@ -1,0 +1,44 @@
+name: edw
+version: "1.0.0"
+config-version: 2
+
+profile: edw
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+
+clean-targets: ["target", "dbt_packages"]
+
+# Project variables, read in models with {{ var('name') }}.
+# Override for one run: dbt build --vars '{tasty_bytes_order_start_date: "2022-06-01"}'
+vars:
+  # First order date loaded by the Tasty Bytes models. Keeps test builds small;
+  # the data ends 2022-11-01, so this default is about one month (~38M order lines).
+  tasty_bytes_order_start_date: "2022-10-01"
+
+# Folder layout: models/<TIER>/<SCHEMA>/<model>.sql
+#   <TIER>   -> database <ENV>_<TIER>      (generate_database_name; ENV = target name)
+#   <SCHEMA> -> schema   <SCHEMA>          (generate_schema_name; DEV adds <DBT_DEV_PREFIX>_)
+# +database below must equal the tier folder name. Materialization defaults are set
+# per tier and can be overridden per schema folder or per model.
+models:
+  edw:
+    T3_REFERENCE:
+      +database: T3_REFERENCE
+      +materialized: view
+    T3_INTEGRATION:
+      +database: T3_INTEGRATION
+      +materialized: view
+    T4_DATA_MART:
+      +database: T4_DATA_MART
+      +materialized: table
+      # Schema-level override example:
+      # HCM:
+      #   +materialized: incremental
+    T5_PRESENTATION:
+      +database: T5_PRESENTATION
+      +materialized: view

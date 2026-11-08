@@ -1,0 +1,43 @@
+# Read only by dbt Projects on Snowflake (Workspaces, Cortex Code Desktop, deployed objects).
+# Local dbt reads ~/.dbt/profiles.yml instead. No secrets or auth settings belong here.
+# Select a target with --target (or the object's DEFAULT_TARGET); it sets the
+# environment prefix (DEV_/TEST_/UAT_/PROD_) applied to every tier database.
+edw:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: 'not needed'
+      user: 'not needed'
+      role: SYSADMIN
+      warehouse: COMPUTE_WH
+      database: DEV_T3_INTEGRATION
+      schema: PUBLIC
+      threads: 8
+    test:
+      type: snowflake
+      account: 'not needed'
+      user: 'not needed'
+      role: SYSADMIN
+      warehouse: COMPUTE_WH
+      database: TEST_T3_INTEGRATION
+      schema: PUBLIC
+      threads: 8
+    uat:
+      type: snowflake
+      account: 'not needed'
+      user: 'not needed'
+      role: SYSADMIN
+      warehouse: COMPUTE_WH
+      database: UAT_T3_INTEGRATION
+      schema: PUBLIC
+      threads: 8
+    prod:
+      type: snowflake
+      account: 'not needed'
+      user: 'not needed'
+      role: SYSADMIN
+      warehouse: COMPUTE_WH
+      database: PROD_T3_INTEGRATION
+      schema: PUBLIC
+      threads: 8

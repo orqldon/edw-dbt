@@ -1,0 +1,14 @@
+version: 2
+
+# Presentation models: views (T5_PRESENTATION default) shaped for consumers.
+models:
+  - name: vw_sales_by_truck_daily
+    description: One row per truck per order date.
+    columns:
+      - name: sales_amount
+        data_tests: [not_null]
+  - name: vw_customer_sales
+    description: One row per loyalty customer with orders in the loaded window.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]

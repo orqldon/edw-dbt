@@ -1,0 +1,11 @@
+version: 2
+
+# Interim models: views (T3_INTEGRATION default). Their keys are tested where they
+# are persisted, in T4, so these views aren't scanned twice per build.
+models:
+  - name: int_order_lines
+    description: >
+      Order lines joined to their order header for the loaded date window
+      (var tasty_bytes_order_start_date). One row per order line.
+  - name: int_trucks
+    description: One row per truck, with truck brand and franchisee name.

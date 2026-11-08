@@ -1,0 +1,53 @@
+version: 2
+
+# T1/T2 are loaded outside dbt, so they are sources, not models. The naming macros
+# don't apply to sources: set the environment prefix explicitly from the target,
+# so `dbt build --target test` reads TEST_T2_PERSISTENT_STAGING, and so on.
+# Sources have no DEV prefix: every developer reads the same DEV_T2 tables.
+#
+# Models read these with {{ source('tasty_bytes', 'order_header') }}, never by name.
+
+sources:
+  - name: tasty_bytes
+    description: Tasty Bytes point-of-sale and loyalty data (setup/clone_tasty_bytes.sql).
+    database: "{{ target.name | upper }}_T2_PERSISTENT_STAGING"
+    schema: TASTY_BYTES
+    tables:
+      # Source tests check the raw data before any model uses it. Keys are tested on
+      # the small tables only: a unique test on the order tables (hundreds of millions
+      # of rows) would cost more than the whole build. Their keys are tested on the
+      # fact table instead, after the date window is applied.
+      - name: order_header
+        description: One row per order.
+      - name: order_detail
+        description: One row per order line.
+      - name: truck
+        columns:
+          - name: truck_id
+            data_tests: [unique, not_null]
+      - name: menu
+        description: One row per menu item; also carries the truck brand per menu type.
+        columns:
+          - name: menu_item_id
+            data_tests: [unique, not_null]
+      - name: franchise
+        description: >
+          Franchisees. Known issue: 10 franchise_ids appear twice (same person, one row
+          per city, or exact duplicates). int_trucks reduces it to one row per id.
+        columns:
+          - name: franchise_id
+            data_tests:
+              - not_null
+              # severity: warn reports the failure without failing the build or
+              # skipping downstream models. Use it for known, handled issues.
+              - unique:
+                  config:
+                    severity: warn
+      - name: location
+        columns:
+          - name: location_id
+            data_tests: [unique, not_null]
+      - name: customer_loyalty
+        columns:
+          - name: customer_id
+            data_tests: [unique, not_null]

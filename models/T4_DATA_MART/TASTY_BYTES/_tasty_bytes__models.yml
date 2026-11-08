@@ -1,0 +1,65 @@
+version: 2
+
+# Mart models: tables (T4_DATA_MART default). Generic tests are declared per column;
+# `dbt build` runs each one right after its model and skips downstream models on failure.
+models:
+  - name: dim_truck
+    description: One row per truck.
+    columns:
+      - name: truck_id
+        data_tests: [unique, not_null]
+
+  - name: dim_location
+    description: One row per location.
+    columns:
+      - name: location_id
+        data_tests: [unique, not_null]
+
+  - name: dim_menu_item
+    description: One row per menu item.
+    columns:
+      - name: menu_item_id
+        data_tests: [unique, not_null]
+      - name: item_category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Main, Beverage, Dessert, Snack]
+
+  - name: dim_customer
+    description: One row per loyalty customer, plus customer_id -1 for unknown customers.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+
+  - name: fct_order_line
+    description: One row per order line. Grain is order_detail_id.
+    columns:
+      - name: order_detail_id
+        data_tests: [unique, not_null]
+      # relationships: every key value must exist in the dimension (no orphans).
+      - name: truck_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_truck')
+                field: truck_id
+      - name: location_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_location')
+                field: location_id
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_id
+      - name: menu_item_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_menu_item')
+                field: menu_item_id
