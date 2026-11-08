@@ -56,7 +56,7 @@ flowchart LR
 |---|---|---|---|
 | T2 | 8 raw tables | loaded outside dbt | dbt reads them as sources |
 | T3 | `int_order_lines`, `int_trucks` | view | interim processing: joins, deduplication, type fixes, the date window |
-| T4 | 4 dims, `fct_order_line` | table | the star schema; tested and persisted |
+| T4 | 4 dims, `fct_order_line` | table (the fact: incremental) | the star schema; tested and persisted |
 | T5 | `vw_dim_*`, `vw_fct_order_line`, 2 aggregates | view | what consumers query |
 
 Each environment ends up with 14 objects, all in a `TASTY_BYTES` schema in each tier database (`DEVONB_TASTY_BYTES` in DEV).
@@ -107,7 +107,7 @@ These are views: cheap to build and always current. Nothing reads them except T4
 ### T4: the star schema
 
 - **Dimensions:** [dim_truck](models/T4_DATA_MART/TASTY_BYTES/dim_truck.sql) just publishes `int_trucks`. [dim_location](models/T4_DATA_MART/TASTY_BYTES/dim_location.sql) and [dim_menu_item](models/T4_DATA_MART/TASTY_BYTES/dim_menu_item.sql) read their sources directly, because there is nothing to clean. A T3 model is only worth adding when it does real work. [dim_customer](models/T4_DATA_MART/TASTY_BYTES/dim_customer.sql) adds a `-1` "Unknown" row for orders without a loyalty account.
-- **Fact:** [fct_order_line](models/T4_DATA_MART/TASTY_BYTES/fct_order_line.sql), one row per order line: keys to each dimension plus quantity, unit price and line amount. A NULL customer becomes `-1`, so every fact row joins to `dim_customer` and the fact can be tested for orphans.
+- **Fact:** [fct_order_line](models/T4_DATA_MART/TASTY_BYTES/fct_order_line.sql), one row per order line: keys to each dimension plus quantity, unit price and line amount. A NULL customer becomes `-1`, so every fact row joins to `dim_customer` and the fact can be tested for orphans. It is incremental (below).
 
 These are tables, so consumers don't pay for the joins on every query.
 
@@ -124,7 +124,7 @@ The quickstart put everything in one layer: `orders` was a single wide table joi
 
 ### Materializations come from the folder
 
-No model sets its own materialization. [dbt_project.yml](dbt_project.yml) sets one per tier folder, and every model in that folder inherits it:
+No model sets its own materialization except the fact. [dbt_project.yml](dbt_project.yml) sets one per tier folder, and every model in that folder inherits it:
 
 ```yaml
 models:
@@ -134,7 +134,36 @@ models:
       +materialized: table
 ```
 
-A schema folder or a single model can override it (`{{ config(materialized='incremental') }}` at the top of a model).
+A schema folder or a single model can override it. `fct_order_line` does, with a `{{ config(...) }}` block at the top of the model.
+
+### The incremental fact
+
+A `table` model is rebuilt from scratch on every run. An **incremental** model is built in full once; after that, each run adds only the new rows. That is the usual choice for a large fact table that only grows, such as order lines.
+
+```sql
+{{ config(
+    materialized='incremental',
+    unique_key='order_detail_id',
+    incremental_strategy='merge'
+) }}
+
+SELECT ...
+FROM {{ ref('int_order_lines') }} AS lines
+
+{% if is_incremental() %}
+    WHERE lines.order_ts > (SELECT MAX(existing.order_ts) FROM {{ this }} AS existing)
+{% endif %}
+```
+
+- `is_incremental()` is false on the first build and on `--full-refresh`, so the `WHERE` disappears and the whole window loads. On later runs it is true, and only lines newer than the newest one already in the table are selected.
+- `{{ this }}` is the model's own existing table.
+- `incremental_strategy='merge'` with `unique_key` makes dbt run a `MERGE` on `order_detail_id`: a line that arrives again updates its row instead of duplicating it.
+
+The order data here never changes, so an incremental run merges zero rows. That still shows the mechanism, and the run takes about 3 seconds instead of 12.
+
+When to rebuild with `dbt build --full-refresh --select fct_order_line+`:
+- after changing the model's logic or columns, because existing rows were built by the old logic;
+- after moving `tasty_bytes_order_start_date` earlier, because the filter only looks forward from the newest loaded row. The row-count test (section 6) fails until you do.
 
 ### The date window: a project variable
 
@@ -146,7 +175,7 @@ vars:
 ```
 
 ```sql
-where order_ts >= '{{ var("tasty_bytes_order_start_date") }}'
+WHERE order_ts >= '{{ var("tasty_bytes_order_start_date") }}'
 ```
 
 The default is one month (~38M order lines). Override it for a single run: `dbt build --vars '{tasty_bytes_order_start_date: "2022-01-01"}'`.
@@ -173,7 +202,7 @@ To see the names without building anything, run `dbt compile --target prod` and 
 
 ## 6. Tests
 
-dbt tests are queries that return the rows that break a rule; a test passes when it returns nothing. The project has 30.
+dbt tests are queries that return the rows that break a rule; a test passes when it returns nothing. The project has 32.
 
 **Generic tests** are declared in YAML next to the models (`_tasty_bytes__models.yml` in each tier folder) and in `_sources.yml`:
 
@@ -183,6 +212,10 @@ dbt tests are queries that return the rows that break a rule; a test passes when
 | `relationships` | `fct_order_line.truck_id` to `dim_truck.truck_id` | no orphan keys in the fact |
 | `accepted_values` | `dim_menu_item.item_category` | only Main, Beverage, Dessert, Snack |
 | source tests | `truck.truck_id` unique | the raw data, before any model reads it |
+| `dbt_utils.unique_combination_of_columns` | `vw_sales_by_truck_daily` on `(order_date, truck_id)` | the grain of a model where no single column is unique |
+| `dbt_expectations.expect_table_row_count_to_equal_other_table` | `fct_order_line` against `int_order_lines` | the incremental fact holds exactly the rows of its input: none missed, none duplicated |
+
+The last two come from packages (section 7). Their names are prefixed with the package, and they're declared at the model level, under `data_tests:` next to `columns:`, because they test the whole model rather than one column.
 
 **Singular tests** are standalone SELECTs in `tests/`, for rules the generic tests can't express. [assert_order_line_amount_is_quantity_times_price](tests/assert_order_line_amount_is_quantity_times_price.sql) checks every line amount equals quantity times unit price.
 
@@ -200,7 +233,83 @@ That is the usual pattern: test sources to find problems, fix them in T3, test t
 
 Tests can cost real compute, so the big order tables have no source tests (a `unique` on 670M rows costs more than the whole build). Their keys are tested on the fact, after the date window.
 
-## 7. Running it
+## 7. Packages
+
+A dbt **package** is another dbt project's macros, tests and checks, installed into yours. [packages.yml](packages.yml) lists them with exact versions:
+
+| Package | What it adds | Used here for |
+|---|---|---|
+| `dbt_utils` | general SQL helpers and generic tests | `unique_combination_of_columns` |
+| `dbt_expectations` (+ `dbt_date`) | Great Expectations-style data tests | `expect_table_row_count_to_equal_other_table` |
+| `codegen` | generates YAML and SQL boilerplate | on demand, e.g. `dbt run-operation generate_source --args '{schema_name: TASTY_BYTES, database_name: DEV_T2_PERSISTENT_STAGING}'` |
+| `dbt_project_evaluator` | best-practice checks on the project itself | section 9 |
+
+`dbt deps` downloads them into `dbt_packages/` and writes the exact versions it resolved to `package-lock.yml`.
+
+Normally `dbt_packages/` stays out of git and every run downloads the packages. That doesn't work here: Snowflake can only reach the package hub through an external access integration, and this account doesn't have one. dbt v2 skips the download when `dbt_packages/` already exists, so the folder is committed with the project and reaches Snowflake through the Git workspace. To add or upgrade a package: edit `packages.yml`, run `dbt deps` locally, then commit `packages.yml`, `package-lock.yml` and `dbt_packages/` together.
+
+## 8. Linting and formatting
+
+dbt v2 has two built-in commands that keep SQL in one house style. Both read the rules in [.sqlfluff](.sqlfluff) and skip the paths in `.sqlfluffignore` (packages, build output, the setup script).
+
+- **`dbt lint`** reports rule violations, each with its code, file and line. `dbt lint --fix` applies the ones it can fix automatically; run it again until it's clean, because one fix can expose another violation.
+- **`dbt format`** rewrites layout only (indentation, spacing, line breaks), in place, without reporting. `dbt format --check` changes nothing and fails if any file would change.
+
+The rules here:
+- **Capitalisation:** keywords and functions in uppercase, identifiers in lowercase.
+- **Layout:** lines up to 120 characters.
+- **The standard groups** (aliasing, ambiguity, conventions, references, structure). For example, every column needs an explicit `AS` alias, and columns are qualified consistently.
+- **dbt's own rules:** no `OR` in a join condition (DBT02), no function wrapped around a filtered column (DBT03), no `LIKE` pattern starting with `%` (DBT04), no hard-coded name inside `ref()`/`source()` (DBT05).
+
+`dbt lint` renders each model with the project's real Jinja and macros first, so it lints the SQL that will actually run, and it needs no connection to Snowflake.
+
+To silence a rule on one line, add a comment such as `-- noqa: RF04`. [dim_customer](models/T4_DATA_MART/TASTY_BYTES/dim_customer.sql) does this for `first_name` and `last_name`, which the Snowflake dialect lists as keywords.
+
+When to use them:
+- **While writing a model:** `dbt format`, then `dbt lint --fix`, then fix by hand whatever `dbt lint` still reports.
+- **Before committing:** `dbt lint` and `dbt format --check` should both be clean.
+- **In CI, once there is a pipeline:** run the same two commands and fail the build on any output.
+
+## 9. Checking the project against best practices
+
+**dbt_project_evaluator** checks the *project*, not the data: how models depend on each other, how they're named, whether they're tested and documented. Each rule is a dbt **check**, a query over dbt's own metadata about the project. Checks need no warehouse, so they cost nothing and take about a second.
+
+Checks run before every `dbt build` and on demand with `dbt check`. Here they're **off by default**, because some rules contradict this project's deliberate design (below), and their warnings would appear in every build:
+
+```yaml
+# dbt_project.yml
+checks:
+  dbt_project_evaluator:
+    +enabled: "{{ var('run_project_evaluator', false) }}"
+```
+
+Run them with:
+
+```bash
+dbt check --vars '{run_project_evaluator: true}'
+```
+
+In Snowflake: `EXECUTE DBT PROJECT DEV_T3_INTEGRATION.DBT.EDW ARGS = 'check --vars ''{run_project_evaluator: true}''';`
+
+Every rule warns rather than fails. Currently 12 of its 28 rules flag something:
+
+| Rule | Flags | Why |
+|---|---|---|
+| `fct_marts_or_intermediate_dependent_on_source` | `int_*`, `dim_location`, `dim_customer`, `dim_menu_item` | dbt Labs' convention is one `stg_` view per source table, with everything else reading those. This project lets T3 models and clean dims read sources directly (section 4). |
+| `fct_source_directories` | the sources | it expects them under `models/staging/<source>/`; here they're in `models/sources/` |
+| `fct_model_naming_conventions` | the `vw_*` views | it treats them as "other" models, which it expects to be named `rpt_` |
+| `fct_multiple_sources_joined` | `int_order_lines`, `int_trucks` | joining several sources in one model is what a staging layer would avoid |
+| `fct_source_fanout` | `menu` | one source feeds two models (`int_trucks`, `dim_menu_item`) |
+| `fct_model_fanout` | `fct_order_line` | more than 3 models read it directly (the T5 views) |
+| `fct_missing_primary_key_tests` | 7 T5 views | the pass-through views have no unique/not-null test of their own |
+| `fct_test_coverage` | the project | 9 of 14 models are tested (64%), against a target of 100% |
+| `fct_undocumented_models`, `fct_documentation_coverage` | the 5 pass-through views | they have no `description:` |
+| `fct_undocumented_source_tables` | `location`, `customer_loyalty`, `truck` | no `description:` |
+| `fct_sources_without_freshness` | the sources | no `freshness:` block, which would let `dbt source freshness` warn when T2 stops updating |
+
+Some of these are deliberate design (the first four); others are real gaps worth closing (tests, descriptions, freshness). For the deliberate ones, a real project would record an exception or turn the rule off, so each run shows only genuine problems. The package docs show both: [exceptions](https://dbt-labs.github.io/dbt-project-evaluator/latest/customization/exceptions/), and `+enabled: false` per rule under `checks:`.
+
+## 10. Running it
 
 ### Locally
 
@@ -209,12 +318,14 @@ cd dbt
 export DBT_DEV_PREFIX=DEVONB
 dbt build --target dev                                   # everything, with tests
 dbt build --target dev --select +vw_sales_by_truck_daily # one view and its upstream
+dbt build --target dev --full-refresh                    # rebuild incremental models too
 dbt compile --target prod                                # names only, no build
+dbt lint && dbt format --check                           # style
 ```
 
 ### In Snowflake (the deployed project object)
 
-The same files are deployed to `DEV_T3_INTEGRATION.DBT.EDW` (see the README for the deploy steps) and run with:
+The same files reach Snowflake through git: commit and push, **Pull** in the Git-backed Snowsight workspace, then deploy the workspace to `DEV_T3_INTEGRATION.DBT.EDW` (see the README). Run it with:
 
 ```sql
 EXECUTE DBT PROJECT DEV_T3_INTEGRATION.DBT.EDW ARGS = 'build --target test' ENVIRONMENT = 'test';
@@ -222,34 +333,37 @@ EXECUTE DBT PROJECT DEV_T3_INTEGRATION.DBT.EDW ARGS = 'build --target test' ENVI
 
 Hosted runs get no shell, so `env.yml` supplies `DBT_DEV_PREFIX` for DEV from the caller's Snowflake user. The run's output appears in the result's `STDOUT` column.
 
-Two gotchas from this test:
-- dbt doesn't drop objects for models you delete. Removing the HCM smoke-test models meant dropping their schemas by hand.
-- `snow stage copy --overwrite` doesn't delete stage files either, so the deleted models were still on the stage. Clear the stage folder before each deploy.
+One gotcha: dbt doesn't drop objects for models you delete. Removing the HCM smoke-test models meant dropping their schemas by hand.
 
-## 8. What was verified
+## 11. What was verified
 
 For each of `dev`, `test`, `uat` and `prod`, both locally and as a hosted run:
-- `dbt compile` and `dbt build` succeed: 14 models, 30 tests, 43 pass, 1 expected warning (the franchise duplicates).
+- `dbt build` succeeds: 14 models and 32 tests, of which 45 pass and 1 warns as expected (the franchise duplicates).
 - Each tier database holds exactly the expected objects: 2 views in T3, 5 tables in T4, 7 views in T5, in `DEVONB_TASTY_BYTES` for DEV and `TASTY_BYTES` elsewhere, with nothing in any other schema.
-- `fct_order_line` has 38,351,186 rows, matching the windowed source count, and `dim_truck` has 450, matching TRUCK.
+- `fct_order_line` has 38,351,186 rows, matching the windowed source count (now also checked by the row-count test), and `dim_truck` has 450, matching TRUCK.
+- An incremental run of `fct_order_line` after a full build merges no rows and its tests still pass.
+- The hosted runs use the committed `dbt_packages/` with no external access integration.
+- `dbt lint` and `dbt format --check` are clean, and `dbt check` gives the same findings locally and hosted.
 - With `DBT_DEV_PREFIX` unset, `dbt compile --target dev` fails with a message saying how to set it.
 
-## 9. Demo script
+## 12. Demo script
 
-A run-through for showing colleagues, about 20 minutes:
+A run-through for showing colleagues, about 30 minutes:
 
 1. **Layout.** Open `models/` and show tier folder, schema folder, model file. Run `dbt compile --target dev` and `--target prod`, then compare the same compiled file: the names change, the SQL doesn't.
 2. **Sources and ref.** Open `int_order_lines.sql` and its compiled version side by side.
 3. **Lineage.** Run `dbt ls --select +vw_customer_sales --resource-type model`, which lists the models upstream of the view (drop `--resource-type` to see their tests too).
 4. **Build.** Run `dbt build --target dev --select +vw_sales_by_truck_daily`. Show the order: source tests, T3, T4 plus their tests, T5.
 5. **A failing test.** Set the franchise test back to `severity: error` and rebuild. Show the failure and the skipped downstream models, then restore it.
-6. **Hosted.** Run the same build with `EXECUTE DBT PROJECT ... --target test` in Snowsight, then query `TEST_T5_PRESENTATION.TASTY_BYTES.VW_SALES_BY_TRUCK_DAILY`.
+6. **Incremental.** Run `dbt build --select fct_order_line` twice: the second run takes a fraction of the time. Open `target/run/.../fct_order_line.sql` to show the `MERGE`. Then widen the window: `dbt build --select int_order_lines+ --vars '{tasty_bytes_order_start_date: "2022-09-01"}'`. The view now covers two months, but the incremental fact only looked for orders newer than its newest row, so the row-count test fails and the T5 views are skipped. Finish with `dbt build --select int_order_lines+ --full-refresh` (no var) to rebuild everything on the default window.
+7. **Lint.** In a copy of a model, lowercase a keyword, wrap a filtered column in `UPPER()` and add an `OR` to a join condition. Run `dbt lint` on that file to show the violations, `dbt lint --fix` to correct the auto-fixable ones, and point out the dbt-specific rules (DBT02, DBT03) that `--fix` leaves for a person. Discard the copy.
+8. **Evaluator.** Run `dbt check --vars '{run_project_evaluator: true}'`. Walk through the table in section 9, contrasting rules this project breaks on purpose with gaps worth fixing.
+9. **Hosted.** Run the same build with `EXECUTE DBT PROJECT ... --target test` in Snowsight, then query `TEST_T5_PRESENTATION.TASTY_BYTES.VW_SALES_BY_TRUCK_DAILY`.
 
-## 10. Deliberately left out
+## 13. Deliberately left out
 
 These would be the next things to learn, and each is a small change to this example:
-- **Incremental models** for `fct_order_line`, to load only new orders instead of rebuilding.
 - **Snapshots** (dbt's SCD Type 2) for slowly changing dims such as `dim_customer`.
-- **Packages** such as `dbt_utils`, for tests like unique-combination-of-columns. Hosted runs need an external access integration to download packages.
-- **Docs:** `dbt docs generate` builds a browsable site from the descriptions in the YAML files.
+- **Source freshness:** a `freshness:` block on the sources, so `dbt source freshness` warns when T2 stops updating.
+- **Docs:** descriptions for every model and source, then `dbt docs generate` for a browsable site.
 - **`--defer`**, so a DEV build can read unchanged upstream models from TEST or PROD instead of building them.

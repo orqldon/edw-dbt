@@ -52,6 +52,9 @@ Rules:
 | `macros/generate_database_name.sql` | dbt | `<TARGET>_<TIER>`, uppercased. |
 | `macros/generate_schema_name.sql` | dbt | Schema from the folder (or `+schema`). Under `dev`, prefixed with the developer's prefix. |
 | `macros/dev_prefix.sql` | dbt | Reads `DBT_DEV_PREFIX` and cleans it: keeps the text before any `@`, replaces any character outside `[A-Za-z0-9_]` with `_`, and uppercases it. Fails under `dev` if unset. |
+| `packages.yml` | dbt | Third-party packages, pinned to exact versions. `dbt deps` installs them into `dbt_packages/` and records the resolved versions in `package-lock.yml`. |
+| `dbt_packages/` | dbt | The installed packages, **committed to git**. Snowflake can't download packages without an external access integration, and dbt skips `dbt deps` when this folder exists. |
+| `.sqlfluff`, `.sqlfluffignore` | `dbt lint`, `dbt format` | SQL style rules (uppercase keywords, lowercase identifiers, 120-character lines, plus dbt's own rules) and the paths they skip. |
 
 Two settings share the word "environment": the **target** (`--target`, from the profile) and the **env.yml environment** (`ENVIRONMENT` / `--env`). The target decides where things build. The env.yml environment only decides which variables are set. Always pass matching names.
 
@@ -88,7 +91,7 @@ Two caveats:
 
 ### Local
 
-One-time setup: add an `edw` profile to `~/.dbt/profiles.yml` with the four targets (same role, warehouse and database as `dbt_projects_profiles.yml`, plus your account, user and authentication), and export `DBT_DEV_PREFIX`.
+One-time setup: install dbt 2.x (`dbt system update` upgrades an existing install), add an `edw` profile to `~/.dbt/profiles.yml` with the four targets (same role, warehouse and database as `dbt_projects_profiles.yml`, plus your account, user and authentication), and export `DBT_DEV_PREFIX`.
 
 ```bash
 cd dbt
@@ -96,28 +99,28 @@ dbt debug                       # connection check
 dbt build                       # dev (default target)
 dbt build --target test
 dbt compile --target prod       # check names without building
+dbt lint                        # SQL style; dbt lint --fix applies the auto-fixable ones
+dbt format                      # rewrite layout in place; --check only reports
+dbt check --vars '{run_project_evaluator: true}'   # best-practice checks (off by default)
 ```
+
+`fct_order_line` is incremental: a normal build adds only new order lines. Rebuild it from scratch with `dbt build --full-refresh --select fct_order_line+`, which is needed after changing its logic or widening `tasty_bytes_order_start_date`.
 
 ### Snowflake-hosted (deployed project object)
 
-The deployed object is `DEV_T3_INTEGRATION.DBT.EDW` (runtime 2.0.0, default target and environment `dev`). Its source files are on the stage `@DEV_T3_INTEGRATION.DBT.EDW_DBT_SRC/edw`.
+The deployed object is `DEV_T3_INTEGRATION.DBT.EDW` (runtime 2.0.0, default target and environment `dev`). It is deployed from a Git-backed Snowsight workspace that holds this folder at its root (in this sandbox, workspace `edw-dbt`).
 
-Redeploy after changing files (`snow` CLI 3.16 is too old for `snow dbt deploy` with `dbt_projects_profiles.yml`, so this uses the stage):
-
-`snow stage copy --overwrite` adds and replaces files but never deletes them, so clear the stage folder first; otherwise deleted or renamed models are deployed again.
-
-```sql
-REMOVE @DEV_T3_INTEGRATION.DBT.EDW_DBT_SRC/edw/;
-```
-
-```bash
-rm -rf target logs dbt_packages
-snow stage copy . @DEV_T3_INTEGRATION.DBT.EDW_DBT_SRC/edw/ --recursive --overwrite --role SYSADMIN
-```
+Redeploy after changing files:
+1. Commit and push the changes, including `dbt_packages/` and `package-lock.yml` if packages changed.
+2. In the Snowsight workspace, **Pull**.
+3. Deploy the workspace's files to the project object:
 
 ```sql
-ALTER DBT PROJECT DEV_T3_INTEGRATION.DBT.EDW DEPLOY FROM '@DEV_T3_INTEGRATION.DBT.EDW_DBT_SRC/edw';
+ALTER DBT PROJECT DEV_T3_INTEGRATION.DBT.EDW
+  DEPLOY FROM 'snow://workspace/USER$DEVONCOCO.PUBLIC."edw-dbt"/versions/live/';
 ```
+
+The path is your user's workspace (`USER$<user>.PUBLIC."<workspace>"`).
 
 Run:
 
@@ -138,7 +141,8 @@ EXECUTE DBT PROJECT DEV_T3_INTEGRATION.DBT.EDW ARGS = 'build --target dev'  ENVI
       +materialized: incremental
   ```
 - **A source:** add it to `models/sources/_sources.yml` with `database: "{{ target.name | upper }}_T2_PERSISTENT_STAGING"`. The naming macros don't apply to sources.
-- **Removing a model:** dbt doesn't drop the objects of deleted models. Drop them yourself in every environment, and clear the stage before the next hosted deploy (see above).
+- **Removing a model:** dbt doesn't drop the objects of deleted models. Drop them yourself in every environment.
+- **A package:** add it to `packages.yml` with an exact version whose `require-dbt-version` includes 2.0 (see hub.getdbt.com), run `dbt deps`, and commit `packages.yml`, `package-lock.yml` and `dbt_packages/`.
 
 ## Notes for porting to an account with a stricter RBAC model
 
@@ -150,4 +154,5 @@ These worked here because SYSADMIN owns everything. Check each one before relyin
 - **DEV per-user schemas.** Developers need `CREATE SCHEMA` on the DEV tier databases.
 - **Project object and `DEV_PREFIX`.** Decide which schema holds the dbt project object and the prefix view, and who owns them. The view's owner needs `SNOWFLAKE.SECURITY_VIEWER` (or ACCOUNTADMIN). Update the view's name in `env.yml` to match.
 - **Profiles.** Replace SYSADMIN / COMPUTE_WH in `dbt_projects_profiles.yml` with each environment's role and warehouse.
-- **Versions.** Check `SELECT SYSTEM$SUPPORTED_DBT_VERSIONS();` lists `2.0.0`. `snow dbt deploy` with `dbt_projects_profiles.yml` needs `snow` CLI 3.25 or later.
+- **Versions.** Check `SELECT SYSTEM$SUPPORTED_DBT_VERSIONS();` lists `2.0.0`. A workspace defaults to the account's `DEFAULT_DBT_VERSION`; set it to 2.0.0, because the test syntax here (`arguments:`) needs dbt v2. `dbt check` needs a release build of dbt v2 locally; the 2.0.0 previews don't have it.
+- **Packages without network access.** The work account likely has no external access integration either, so keep `dbt_packages/` committed. If one is added later, Snowflake can run `dbt deps` itself and the folder can go back into `.gitignore`.
